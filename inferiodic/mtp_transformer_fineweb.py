@@ -62,10 +62,10 @@ class MTPTransformer(nn.Module, GenerationMixin):
 
 		return CausalLMOutput(loss=loss, logits=all_outputs[0])
 
-class SeqMTPTransformer(MTPTransformer, GenerationMixin):
+class OptMTPTransformer(MTPTransformer, GenerationMixin):
 
 	def __init__(self, model, n_tokens=2):
-		super().__init__()
+		super().__init__(model, n_tokens=n_tokens)
 		
 	def forward(self, input_ids, labels=None, **kwargs):
 		x = input_ids
@@ -82,16 +82,20 @@ class SeqMTPTransformer(MTPTransformer, GenerationMixin):
 
 			# gradient accumulation
 			if i < self.n_tokens - 1:
+				trainer.optimizer.zero_grad()
 				loss.backward()
+				trainer.accelerator.scaler.scale(loss)
+				trainer.optimizer.step()
+				trainer.optimizer.zero_grad()
 			x = torch.argmax(output, dim=-2)
 			all_outputs.append(rearrange(output, 'b e t -> b t e')) # rearrange for gen
 
-		return CausalLMOutput(loss=loss, logits=all_outputs[0])
+		return CausalLMOutput(loss, logits=all_outputs[-1])
 
 
 if __name__ == '__main__':
 	dim = 512
-	context_length = 32
+	context_length = 512
 	llama_config_kwargs = {
 		'hidden_size': dim,
 		'intermediate_size': 4*dim,
@@ -105,7 +109,7 @@ if __name__ == '__main__':
 
 	# Initializing a model from the llama-7b style configuration
 	model = LlamaForCausalLM(configuration).float()
-	model = MTPTransformer(model, n_tokens=4)
+	model = SeqMTPTransformer(model, n_tokens=1)
 	tokenizer = AutoTokenizer.from_pretrained("/home/bbadger/Desktop/tokenizer_fineweb_8k")
 	tokenizer.pad_token = tokenizer.eos_token
 	n_vocab = len(tokenizer)
@@ -122,9 +126,8 @@ if __name__ == '__main__':
 	mlflow.end_run()
 	training_arguments = transformers.TrainingArguments(
 		num_train_epochs=3,
-		per_device_train_batch_size=8,
-		per_device_eval_batch_size=8,
-		gradient_accumulation_steps=2,
+		per_device_train_batch_size=16,
+		per_device_eval_batch_size=16,
 		warmup_steps=500,
 		eval_steps=4000,
 		save_steps=8000,
@@ -135,7 +138,7 @@ if __name__ == '__main__':
 		optim='adamw_torch',
 		overwrite_output_dir=True,
 		max_steps=200000,
-		torch_compile=True
+		#torch_compile=True
 	)
 
 	trainer = transformers.Trainer(
