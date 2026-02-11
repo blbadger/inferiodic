@@ -92,6 +92,32 @@ class OptMTPTransformer(MTPTransformer, GenerationMixin):
 
 		return CausalLMOutput(loss, logits=all_outputs[-1])
 
+class AccumMTPTransformer(MTPTransformer, GenerationMixin):
+
+	def __init__(self, model, n_tokens=2):
+		super().__init__(model, n_tokens=n_tokens)
+		
+	def forward(self, input_ids, labels=None, **kwargs):
+		x = input_ids
+		if labels is None:
+			# label initialization
+			labels = torch.where(input_ids==1, -100, input_ids)
+		all_outputs = []
+		for i in range(self.n_tokens):
+			output = self.model.lm_head(self.model.model(x)[0])
+			output = rearrange(output, 'b t e -> b e t')
+			shift_logits = output[..., :-(1 + i)].contiguous()
+			shift_labels = labels[..., (1 + i):].contiguous()
+			loss = self.cel(shift_logits, shift_labels)
+
+			# gradient accumulation
+			if i < self.n_tokens - 1:
+				loss.backward()
+			x = torch.argmax(output, dim=-2)
+			all_outputs.append(rearrange(output, 'b e t -> b t e')) # rearrange for gen
+
+		return CausalLMOutput(loss, logits=all_outputs[-1])
+
 
 if __name__ == '__main__':
 	dim = 512
@@ -109,7 +135,7 @@ if __name__ == '__main__':
 
 	# Initializing a model from the llama-7b style configuration
 	model = LlamaForCausalLM(configuration).float()
-	model = SeqMTPTransformer(model, n_tokens=1)
+	model = AccumMTPTransformer(model, n_tokens=2)
 	tokenizer = AutoTokenizer.from_pretrained("/home/bbadger/Desktop/tokenizer_fineweb_8k")
 	tokenizer.pad_token = tokenizer.eos_token
 	n_vocab = len(tokenizer)
