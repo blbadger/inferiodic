@@ -10,23 +10,7 @@ import mlflow
 from datasets import load_from_disk
 import datasets
 
-device = 0 if torch.cuda.is_available else 'cpu'
-
-dim = 512
-context_length = 32
-llama_config_kwargs = {
-	'hidden_size': dim,
-	'intermediate_size': 4*dim,
-	'num_hidden_layers': 16,
-	'num_attention_heads': 4,
-	'vocab_size': 8000
-}
-
-# Initializing a LLaMA model
-configuration = LlamaConfig(**llama_config_kwargs)
-
-# Initializing a model from the llama-7b style configuration
-model = LlamaForCausalLM(configuration).float()
+device = 'cuda' if torch.cuda.is_available else 'cpu'
 
 class MTPTransformer(nn.Module, GenerationMixin):
 
@@ -67,21 +51,64 @@ class MTPTransformer(nn.Module, GenerationMixin):
 			output = rearrange(output, 'b t e -> b e t')
 			shift_logits = output[..., :-(1 + i)].contiguous()
 			shift_labels = labels[..., (1 + i):].contiguous()
+
+			# loss accumulation
 			if 'loss' in vars():
 				loss += self.cel(shift_logits, shift_labels)
 			else:
 				loss = self.cel(shift_logits, shift_labels)
 			x = torch.argmax(output, dim=-2)
-			all_outputs.append(rearrange(output, 'b e t -> b t e'))# rearrange for gen
+			all_outputs.append(rearrange(output, 'b e t -> b t e')) # rearrange for gen
 
 		return CausalLMOutput(loss=loss, logits=all_outputs[0])
 
+class SeqMTPTransformer(MTPTransformer, GenerationMixin):
+
+	def __init__(self, model, n_tokens=2):
+		super().__init__()
+		
+	def forward(self, input_ids, labels=None, **kwargs):
+		x = input_ids
+		if labels is None:
+			# label initialization
+			labels = torch.where(input_ids==1, -100, input_ids)
+		all_outputs = []
+		for i in range(self.n_tokens):
+			output = self.model.lm_head(self.model.model(x)[0])
+			output = rearrange(output, 'b t e -> b e t')
+			shift_logits = output[..., :-(1 + i)].contiguous()
+			shift_labels = labels[..., (1 + i):].contiguous()
+			loss = self.cel(shift_logits, shift_labels)
+
+			# gradient accumulation
+			if i < self.n_tokens - 1:
+				loss.backward()
+			x = torch.argmax(output, dim=-2)
+			all_outputs.append(rearrange(output, 'b e t -> b t e')) # rearrange for gen
+
+		return CausalLMOutput(loss=loss, logits=all_outputs[0])
+
+
 if __name__ == '__main__':
+	dim = 512
+	context_length = 32
+	llama_config_kwargs = {
+		'hidden_size': dim,
+		'intermediate_size': 4*dim,
+		'num_hidden_layers': 16,
+		'num_attention_heads': 4,
+		'vocab_size': 8000
+	}
+
+	# Initializing a LLaMA model
+	configuration = LlamaConfig(**llama_config_kwargs)
+
+	# Initializing a model from the llama-7b style configuration
+	model = LlamaForCausalLM(configuration).float()
 	model = MTPTransformer(model, n_tokens=4)
 	tokenizer = AutoTokenizer.from_pretrained("/home/bbadger/Desktop/tokenizer_fineweb_8k")
 	tokenizer.pad_token = tokenizer.eos_token
 	n_vocab = len(tokenizer)
-
 
 	train_path = "/home/bbadger/Desktop/fineweb-edu-tokenized-train-c512"
 	test_path = "/home/bbadger/Desktop/fineweb-edu-tokenized-test-c512"
@@ -103,7 +130,7 @@ if __name__ == '__main__':
 		save_steps=8000,
 		learning_rate=2e-4, 
 		fp16=True, 
-		#evaluation_strategy='steps',
+		eval_strategy='steps',
 		output_dir='~/Desktop/mtp4_fineweb_llama_512_n16_c512_b8x4x2',
 		optim='adamw_torch',
 		overwrite_output_dir=True,

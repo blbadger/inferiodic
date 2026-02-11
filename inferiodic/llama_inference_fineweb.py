@@ -97,9 +97,9 @@ with contextlib.nullcontext():
 for i in range(20):
 	tokens = next(iter_data)
 	last_index = 200
-	tokens = tokenizer.decode(tokens['input_ids'][:last_index]
+	tokens = tokenizer.decode(tokens['input_ids'][:last_index])
 	
-	string = tokenizer.decode(tokens['input_ids'][:last_index]
+	string = tokenizer.decode(tokens['input_ids'][:last_index])
 	#attention_mask =torch.tensor(tokens["attention_mask"]).unsqueeze(0)
 	tokens = torch.tensor(tokens['input_ids'][:last_index]).unsqueeze(0)
 	print (string)
