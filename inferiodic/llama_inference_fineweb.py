@@ -13,6 +13,7 @@ from transformers import LlamaConfig, LlamaForCausalLM
 import contextlib
 from datasets import load_from_disk
 from mtp_transformer_fineweb import MTPTransformer
+from colorama import Fore, Back, Style
 
 tokenizer = AutoTokenizer.from_pretrained("/home/bbadger/Desktop/tokenizer_fineweb_8k")
 tokenizer.pad_token = tokenizer.eos_token
@@ -22,11 +23,13 @@ tokenized_length = 512
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
 dim = 512
+n_heads = 8
+layers = 16
 llama_config_kwargs = {
     'hidden_size': dim,
     'intermediate_size': 4*dim,
-    'num_hidden_layers': 16,
-    'num_attention_heads': 4,
+    'num_hidden_layers': layers,
+    'num_attention_heads': n_heads,
     'vocab_size': 8000,
     'use_cache': False
 }
@@ -35,47 +38,20 @@ llama_config_kwargs = {
 configuration = LlamaConfig(**llama_config_kwargs)
 
 # Initializing a model from the llama-7b style configuration
-model = LlamaForCausalLM(configuration).float()
-model = MTPTransformer(model).to(device)
-load_model(model, '/home/bbadger/Desktop/fineweb_training/mtp3_fineweb_llama_512_n16_c512/checkpoint-200000/model.safetensors')
+model = LlamaForCausalLM(configuration).to(device)
+load_model(model, '/home/bbadger/Desktop/fineweb_training/fineweb_llama_512_n16_h8_c512/checkpoint-200000/model.safetensors')
+
+#model = MTPTransformer(model, n_tokens=1).to(device)
+#load_model(model, '/home/bbadger/Desktop/fineweb_training/mtp3_fineweb_llama_512_n16_c512/checkpoint-200000/model.safetensors')
+#load_model(model, '/home/bbadger/Desktop/mtp16_fineweb_llama_512_n16_c128_b16x4x1/checkpoint-40000/model.safetensors')
 
 train_path = "/home/bbadger/Desktop/fineweb-edu-tokenized-train-c512"
 test_path = "/home/bbadger/Desktop/fineweb-edu-tokenized-test-c512"
 
 train_dataset = load_from_disk(train_path)
 test_dataset = load_from_disk(test_path)
-
-load_from_checkpoint=False
-if load_from_checkpoint:
-	mlflow.end_run()
-	training_arguments = transformers.TrainingArguments(
-		num_train_epochs=2,
-		per_device_train_batch_size=1,
-		per_device_eval_batch_size=1,
-		warmup_steps=500,
-		eval_steps=4000,
-		save_steps=4000,
-		learning_rate=2e-4, 
-		fp16=True, 
-		evaluation_strategy='steps',
-		output_dir='~/Desktop/fineweb_transfixer_512_n8_c512',
-		optim='adamw_torch',
-		overwrite_output_dir=True,
-		max_steps=96010
-	)
-
-	trainer = transformers.Trainer(
-		model=model,
-		train_dataset=train_dataset,
-		eval_dataset=test_dataset,
-		args=training_arguments,
-		data_collator=transformers.DataCollatorForLanguageModeling(tokenizer, mlm=False),
-	)
-	model.train()
-	trainer.train('/home/bbadger/Desktop/fineweb_transfixer_512_n8_c512/checkpoint-96000')
-	model.eval()
-
 iter_data = iter(test_dataset)
+
 with contextlib.nullcontext():
 	total = 0
 	for i in range(10):
@@ -92,22 +68,21 @@ with contextlib.nullcontext():
 		output = model.forward(input_ids=tokens.to(device), labels=label_tokens.to(device), attention_mask=attention_mask)
 		print ('Given loss: ', output[0])
 		total += float(output[0])
-	print ('Average loss: ', total / 20)
+	print ('Average loss: ', total/i)
 
 for i in range(20):
 	tokens = next(iter_data)
-	last_index = 200
-	tokens = tokenizer.decode(tokens['input_ids'][:last_index])
-	
-	string = tokenizer.decode(tokens['input_ids'][:last_index])
+	last_index = 60
+	tokens = tokens['input_ids'][:last_index]
+	string = tokenizer.decode(tokens)
 	#attention_mask =torch.tensor(tokens["attention_mask"]).unsqueeze(0)
-	tokens = torch.tensor(tokens['input_ids'][:last_index]).unsqueeze(0)
-	print (string)
+	tokens = torch.tensor(tokens).unsqueeze(0)
+	print (Fore.CYAN + Style.BRIGHT + string)
 	print (tokens.shape)
 
-	output = model.generate(tokens.to(device), max_new_tokens=200)
+	output = model.generate(tokens.to(device), max_new_tokens=60)
 	string = tokenizer.decode(output[0])
-	print ('Output: ', string, "\n", output)
+	print (Fore.MAGENTA + Style.BRIGHT + 'Output: ', string, "\n", output)
 
 	label_tokens = torch.where(tokens==1, -100, tokens).clone().detach()
 	print ('Loss: ', model(tokens.to(device), labels=label_tokens.to(device))[0])
