@@ -14,6 +14,8 @@ import contextlib
 from datasets import load_from_disk
 from mtp_transformer_fineweb import MTPTransformer
 from colorama import Fore, Back, Style
+from periodicity import periodicity
+import matplotlib.pyplot as plt
 
 tokenizer = AutoTokenizer.from_pretrained("/home/bbadger/Desktop/tokenizer_fineweb_8k")
 tokenizer.pad_token = tokenizer.eos_token
@@ -70,7 +72,8 @@ with contextlib.nullcontext():
 		total += float(output[0])
 	print ('Average loss: ', total/i)
 
-for i in range(20):
+periodicities = []
+for i in range(5):
 	tokens = next(iter_data)
 	last_index = 60
 	tokens = tokens['input_ids'][:last_index]
@@ -80,13 +83,20 @@ for i in range(20):
 	print (Fore.CYAN + Style.BRIGHT + string)
 	print (tokens.shape)
 
-	output = model.generate(tokens.to(device), max_new_tokens=60)
+	output = model.generate(tokens.to(device), max_new_tokens=100)
 	string = tokenizer.decode(output[0])
 	print (Fore.MAGENTA + Style.BRIGHT + 'Output: ', string, "\n", output)
 
-	label_tokens = torch.where(tokens==1, -100, tokens).clone().detach()
-	print ('Loss: ', model(tokens.to(device), labels=label_tokens.to(device))[0])
-	#print ('Outputs: ', model(tokens.to(device), labels=label_tokens.to(device))[1][0].shape)
+	# label_tokens = torch.where(tokens==1, -100, tokens).clone().detach()
+	# print ('Loss: ', model(tokens.to(device), labels=label_tokens.to(device))[0])
+	first_periodic_token, periodicity = periodicity(list(output))
+	first_periodic_tokens.append(first_periodic_token)
+	periodicities.append(periodicity)
+
+plt.hist(periodicities)
+plt.show()
+plt.close()
+
 
 
 
